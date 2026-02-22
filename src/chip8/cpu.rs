@@ -37,6 +37,9 @@ pub struct Chip8 {
     // Timers (decrement at 60Hz externally)
     pub delay_timer: u8,
     pub sound_timer: u8,
+
+    // FX0A key-wait state: Some(x) means waiting for a key, storing into VX
+    waiting_for_key: Option<u8>,
 }
 
 // ===============================================================
@@ -89,6 +92,7 @@ impl Chip8 {
             keys: [false; NUM_KEYS],
             delay_timer: 0,
             sound_timer: 0,
+            waiting_for_key: None,
         };
 
         for (index, &byte) in FONT_SET.iter().enumerate() {
@@ -129,6 +133,17 @@ impl Chip8 {
     // ===========================================================
 
     pub fn cycle(&mut self) {
+        // FX0A — block until any key is pressed, then store it in VX
+        if let Some(vx) = self.waiting_for_key {
+            for (key_index, &pressed) in self.keys.iter().enumerate() {
+                if pressed {
+                    self.v[vx as usize] = key_index as u8;
+                    self.waiting_for_key = None;
+                }
+            }
+            return;
+        }
+
         let opcode: u16 = self.fetch();
         let decoded: DecodedFields = DecodedFields::new(opcode);
 
@@ -150,6 +165,7 @@ impl Chip8 {
                         self.sp -= 1;
                         self.pc = self.stack[self.sp as usize];
                     }
+                    // 0x0NNN (call RCA 1802 program) — not used by modern ROMs, intentionally ignored
                     _ => {
                         eprintln!("Unknown opcode: {:#06X}", opcode);
                     }
@@ -176,7 +192,7 @@ impl Chip8 {
 
             // Skip next instruction if VX == NN
             0x3 => {
-                if self.v[decoded.x as usize] == decoded.n {
+                if self.v[decoded.x as usize] == decoded.nn {
                     self.pc += 2;
                 }
             }
@@ -211,6 +227,86 @@ impl Chip8 {
                     self.v[decoded.x as usize].wrapping_add(decoded.nn);
             }
 
+            // Arithmetic and bitwise operations between VX and VY
+            0x8 => {
+                match decoded.n {
+
+                    // VX is set to the value of VY
+                    0x0 => {
+                        self.v[decoded.x as usize] =
+                            self.v[decoded.y as usize];
+                    }
+
+                    // VX is set to VX OR VY
+                    0x1 => {
+                        self.v[decoded.x as usize] |=
+                            self.v[decoded.y as usize];
+                    }
+
+                    // VX is set to VX AND VY
+                    0x2 => {
+                        
+                        self.v[decoded.x as usize] &=
+                            self.v[decoded.y as usize];
+                    }
+
+                    // VX is set to VX XOR VY
+                    0x3 => {
+                        
+                        self.v[decoded.x as usize] ^=
+                            self.v[decoded.y as usize];
+                    }
+
+                    // VX += VY, VF = carry
+                    0x4 => {
+                        let (result, carry) =
+                            self.v[decoded.x as usize]
+                                .overflowing_add(self.v[decoded.y as usize]);
+
+                        self.v[decoded.x as usize] = result;
+                        self.v[0xF] = if carry { 1 } else { 0 };
+                    }
+
+                    // VX -= VY, VF = NOT borrow
+                    0x5 => {
+                        let (result, borrow) =
+                            self.v[decoded.x as usize]
+                                .overflowing_sub(self.v[decoded.y as usize]);
+
+                        self.v[decoded.x as usize] = result;
+                        self.v[0xF] = if borrow { 0 } else { 1 };
+                    }
+
+                    // VX >>= 1, VF = least significant bit before shift
+                    0x6 => {
+                        let lsb = self.v[decoded.x as usize] & 0x1;
+                        self.v[0xF] = lsb;
+                        self.v[decoded.x as usize] >>= 1;
+                    }
+
+                    // VX = VY - VX, VF = NOT borrow
+                    0x7 => {
+                        let (result, borrow) =
+                            self.v[decoded.y as usize]
+                                .overflowing_sub(self.v[decoded.x as usize]);
+
+                        self.v[decoded.x as usize] = result;
+                        self.v[0xF] = if borrow { 0 } else { 1 };
+                    }
+
+                    // VX <<= 1, VF = most significant bit before shift
+                    0xE => {
+                        let msb = (self.v[decoded.x as usize] & 0x80) >> 7;
+                        self.v[0xF] = msb;
+                        self.v[decoded.x as usize] <<= 1;
+                    }
+
+                    _ => {
+                        eprintln!("Invalid 8XYN opcode: {:#06X}", opcode);
+                    }
+                }
+            }
+
             // Skip next instruction if VX != VY (only if N == 0)
             0x9 => {
                 if decoded.n == 0 {
@@ -225,6 +321,17 @@ impl Chip8 {
             // Set I to NNN
             0xA => {
                 self.i = decoded.nnn;
+            }
+
+            // Jump to address NNN + V0
+            0xB => {
+                self.pc = decoded.nnn + self.v[0] as u16;
+            }
+
+            // VX = random byte AND NN
+            0xC => {
+                let random: u8 = rand::random();
+                self.v[decoded.x as usize] = random & decoded.nn;
             }
 
             // Display/draw sprite at (VX, VY) with height N
@@ -253,6 +360,100 @@ impl Chip8 {
 
                             self.display[y][x] ^= true;
                         }
+                    }
+                }
+            }
+
+            // Key input instructions
+            0xE => {
+                let key = self.v[decoded.x as usize] as usize;
+
+                match decoded.nn {
+                    0x9E => {
+                        if key < NUM_KEYS && self.keys[key] {
+                            self.pc += 2;
+                        }
+                    }
+                    0xA1 => {
+                        if key < NUM_KEYS && !self.keys[key] {
+                            self.pc += 2;
+                        }
+                    }
+                    _ => {
+                        eprintln!("Invalid EX opcode: {:#06X}", opcode);
+                    }
+                }
+            }
+
+            // Miscellaneous instructions
+            0xF => {
+                match decoded.nn {
+
+                    // FX07 — VX = delay_timer
+                    0x07 => {
+                        self.v[decoded.x as usize] = self.delay_timer;
+                    }
+
+                    // FX0A — Wait for key press, store key index in VX (blocking)
+                    0x0A => {
+                        if let Some(vx) = self.waiting_for_key {
+                            for (key_index, &pressed) in self.keys.iter().enumerate() {
+                                if pressed {
+                                    self.v[vx as usize] = key_index as u8;
+                                    self.waiting_for_key = None;
+                                    break;
+                                }
+                            }
+                            return;
+                        }
+                    }
+
+                    // FX15 — delay_timer = VX
+                    0x15 => {
+                        self.delay_timer = self.v[decoded.x as usize];
+                    }
+
+                    // FX18 — sound_timer = VX
+                    0x18 => {
+                        self.sound_timer = self.v[decoded.x as usize];
+                    }
+
+                    // FX1E — I += VX
+                    0x1E => {
+                        self.i = self.i.wrapping_add(self.v[decoded.x as usize] as u16);
+                    }
+
+                    // FX29 — Set I to font character location
+                    0x29 => {
+                        let digit = (self.v[decoded.x as usize] & 0x0F) as u16;
+                        self.i = FONT_START + digit * 5;
+                    }
+
+                    // FX33 — Store BCD representation of VX at I, I+1, I+2
+                    0x33 => {
+                        let value = self.v[decoded.x as usize];
+
+                        self.memory[self.i as usize]     = value / 100;
+                        self.memory[self.i as usize + 1] = (value % 100) / 10;
+                        self.memory[self.i as usize + 2] = value % 10;
+                    }
+
+                    // FX55 — Store V0..VX in memory starting at I
+                    0x55 => {
+                        for idx in 0..=decoded.x as usize {
+                            self.memory[self.i as usize + idx] = self.v[idx];
+                        }
+                    }
+
+                    // FX65 — Load V0..VX from memory starting at I
+                    0x65 => {
+                        for idx in 0..=decoded.x as usize {
+                            self.v[idx] = self.memory[self.i as usize + idx];
+                        }
+                    }
+
+                    _ => {
+                        eprintln!("Invalid FX opcode: {:#06X}", opcode);
                     }
                 }
             }
