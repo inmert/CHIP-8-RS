@@ -78,7 +78,7 @@ impl Default for Chip8 {
 impl Chip8 {
 
     pub fn new() -> Self {
-        let mut chip8 = Self {
+        let mut chip8: Chip8 = Self {
             memory: [0; MEMORY_SIZE],
             v: [0; NUM_REGISTERS],
             i: 0,
@@ -99,8 +99,8 @@ impl Chip8 {
     }
 
     pub fn load_rom(&mut self, data: &[u8]) {
-        let start = PROGRAM_START as usize;
-        let end = start + data.len();
+        let start: usize = PROGRAM_START as usize;
+        let end: usize = start + data.len();
 
         if end > MEMORY_SIZE {
             panic!("ROM too large to fit in memory");
@@ -114,10 +114,10 @@ impl Chip8 {
     // ===========================================================
 
     pub fn fetch(&mut self) -> u16 {
-        let high_byte = self.memory[self.pc as usize] as u16;
-        let low_byte  = self.memory[(self.pc + 1) as usize] as u16;
+        let high_byte: u16 = self.memory[self.pc as usize] as u16;
+        let low_byte: u16  = self.memory[(self.pc + 1) as usize] as u16;
 
-        let opcode = (high_byte << 8) | low_byte;
+        let opcode: u16 = (high_byte << 8) | low_byte;
 
         self.pc += 2;
 
@@ -129,19 +129,20 @@ impl Chip8 {
     // ===========================================================
 
     pub fn cycle(&mut self) {
-        let opcode = self.fetch();
-        let decoded = DecodedFields::new(opcode);
+        let opcode: u16 = self.fetch();
+        let decoded: DecodedFields = DecodedFields::new(opcode);
 
         match decoded.first_nibble {
-
+            
+            // System instructions (0x0NNN) and special cases
             0x0 => {
                 match opcode {
+                    // Clear display
                     0x00E0 => {
-                        // Clear display
                         self.display = [[false; DISPLAY_WIDTH]; DISPLAY_HEIGHT];
                     }
+                    // Return from subroutine
                     0x00EE => {
-                        // Return from subroutine
                         if self.sp == 0 {
                             eprintln!("Stack underflow on 0x00EE");
                             return;
@@ -155,31 +156,82 @@ impl Chip8 {
                 }
             }
 
+            // Jump to address NNN
             0x1 => {
-                // Jump to address NNN
                 self.pc = decoded.nnn;
             }
 
+            // Call subroutine at NNN
+            0x2 => {
+                if self.sp as usize >= STACK_SIZE {
+                    eprintln!("Stack overflow on 0x2NNN");
+                    return;
+                }
+
+                self.stack[self.sp as usize] = self.pc;
+                self.sp += 1;
+
+                self.pc = decoded.nnn;
+            }
+
+            // Skip next instruction if VX == NN
+            0x3 => {
+                if self.v[decoded.x as usize] == decoded.n {
+                    self.pc += 2;
+                }
+            }
+
+            // Skip next instruction if VX != NN
+            0x4 => {
+                if self.v[decoded.x as usize] != decoded.nn {
+                    self.pc += 2;
+                }
+            }
+
+            // Skip next instruction if VX == VY (only if N == 0)
+            0x5 => {
+                if decoded.n == 0 {
+                    if self.v[decoded.x as usize] == self.v[decoded.y as usize] {
+                        self.pc += 2;
+                    }
+                } else {
+                    eprintln!("Invalid opcode: {:#06X}", opcode);
+                }
+            }
+
+            // Set VX to NN
             0x6 => {
-                // Set VX to NN
+
                 self.v[decoded.x as usize] = decoded.nn;
             }
 
+            // VX += NN (wrapping)
             0x7 => {
-                // VX += NN (wrapping)
                 self.v[decoded.x as usize] =
                     self.v[decoded.x as usize].wrapping_add(decoded.nn);
             }
 
+            // Skip next instruction if VX != VY (only if N == 0)
+            0x9 => {
+                if decoded.n == 0 {
+                    if self.v[decoded.x as usize] != self.v[decoded.y as usize] {
+                        self.pc += 2;
+                    }
+                } else {
+                    eprintln!("Invalid opcode: {:#06X}", opcode);
+                }
+            }
+
+            // Set I to NNN
             0xA => {
-                // Set I to NNN
                 self.i = decoded.nnn;
             }
 
+            // Display/draw sprite at (VX, VY) with height N
             0xD => {
-                let x_pos = self.v[decoded.x as usize] as usize;
-                let y_pos = self.v[decoded.y as usize] as usize;
-                let height = decoded.n as usize;
+                let x_pos: usize = self.v[decoded.x as usize] as usize;
+                let y_pos: usize = self.v[decoded.y as usize] as usize;
+                let height: usize = decoded.n as usize;
 
                 self.v[0xF] = 0;
 
@@ -188,12 +240,12 @@ impl Chip8 {
                         self.memory[(self.i + row as u16) as usize];
 
                     for bit in 0..8 {
-                        let sprite_pixel =
+                        let sprite_pixel: bool =
                             (sprite_byte & (0x80 >> bit)) != 0;
 
                         if sprite_pixel {
-                            let x = (x_pos + bit) % DISPLAY_WIDTH;
-                            let y = (y_pos + row) % DISPLAY_HEIGHT;
+                            let x: usize = (x_pos + bit) % DISPLAY_WIDTH;
+                            let y: usize = (y_pos + row) % DISPLAY_HEIGHT;
 
                             if self.display[y][x] {
                                 self.v[0xF] = 1;
