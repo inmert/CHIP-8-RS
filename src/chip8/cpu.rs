@@ -5,7 +5,10 @@
 
 use crate::chip8::constants::*;
 
-/// Full CHIP-8 machine state.
+// ===============================================================
+// Full CHIP-8 machine state
+// ===============================================================
+
 pub struct Chip8 {
     // 4KB RAM (0x000–0xFFF)
     pub memory: [u8; MEMORY_SIZE],
@@ -13,16 +16,16 @@ pub struct Chip8 {
     // General-purpose registers V0–VF (VF used as flag)
     pub v: [u8; NUM_REGISTERS],
 
-    // Index register (12-bit address stored in u16)
+    // Index register
     pub i: u16,
 
-    // Program counter (points to current instruction)
+    // Program counter
     pub pc: u16,
 
-    // Subroutine call stack (stores return addresses)
+    // Subroutine call stack
     pub stack: [u16; STACK_SIZE],
 
-    // Stack pointer (index into stack array)
+    // Stack pointer
     pub sp: u8,
 
     // 64x32 monochrome display buffer
@@ -36,12 +39,44 @@ pub struct Chip8 {
     pub sound_timer: u8,
 }
 
+// ===============================================================
+// Decoded Opcode Representation
+// ===============================================================
+
+pub struct DecodedFields {
+    pub first_nibble: u8,
+    pub x: u8,
+    pub y: u8,
+    pub n: u8,
+    pub nn: u8,
+    pub nnn: u16,
+}
+
+impl DecodedFields {
+    pub fn new(opcode: u16) -> Self {
+        Self {
+            first_nibble: ((opcode & 0xF000) >> 12) as u8,
+            x:            ((opcode & 0x0F00) >> 8)  as u8,
+            y:            ((opcode & 0x00F0) >> 4)  as u8,
+            n:            (opcode & 0x000F)         as u8,
+            nn:           (opcode & 0x00FF)         as u8,
+            nnn:           opcode & 0x0FFF,
+        }
+    }
+}
+
+// ===============================================================
+// Chip8 Construction
+// ===============================================================
+
+impl Default for Chip8 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Chip8 {
 
-    /// Initializes a new CHIP-8 instance.
-    /// - Clears memory and registers
-    /// - Sets PC to 0x200
-    /// - Loads built-in font set into reserved memory
     pub fn new() -> Self {
         let mut chip8 = Self {
             memory: [0; MEMORY_SIZE],
@@ -56,16 +91,28 @@ impl Chip8 {
             sound_timer: 0,
         };
 
-        // Load font set into memory at FONT_START
-        for (index, byte) in FONT_SET.iter().enumerate() {
-            chip8.memory[(FONT_START as usize) + index] = *byte;
+        for (index, &byte) in FONT_SET.iter().enumerate() {
+            chip8.memory[FONT_START as usize + index] = byte;
         }
 
         chip8
     }
 
-    /// Fetches the next 16-bit opcode from memory.
-    /// Increments the program counter by 2.
+    pub fn load_rom(&mut self, data: &[u8]) {
+        let start = PROGRAM_START as usize;
+        let end = start + data.len();
+
+        if end > MEMORY_SIZE {
+            panic!("ROM too large to fit in memory");
+        }
+
+        self.memory[start..end].copy_from_slice(data);
+    }
+
+    // ===========================================================
+    // Fetch Stage
+    // ===========================================================
+
     pub fn fetch(&mut self) -> u16 {
         let high_byte = self.memory[self.pc as usize] as u16;
         let low_byte  = self.memory[(self.pc + 1) as usize] as u16;
@@ -77,69 +124,89 @@ impl Chip8 {
         opcode
     }
 
-    /// Extracts commonly used fields from a 16-bit opcode.
-    ///
-    /// Returns:
-    /// (first_nibble, x, y, n, nnn, nn)
-    fn decode_fields(opcode: u16) -> (u8, u8, u8, u8, u16, u8) {
-        let first_nibble = ((opcode & 0xF000) >> 12) as u8;
-        let x            = ((opcode & 0x0F00) >> 8) as u8;
-        let y            = ((opcode & 0x00F0) >> 4) as u8;
-        let n            = (opcode & 0x000F) as u8;
-        let nn           = (opcode & 0x00FF) as u8;
-        let nnn          = opcode & 0x0FFF;
+    // ===========================================================
+    // Execution Cycle
+    // ===========================================================
 
-        (first_nibble, x, y, n, nnn, nn)
-    }
-
-    /// Executes one fetch-decode-execute cycle.
-    /// Timing control must be handled externally.
     pub fn cycle(&mut self) {
-        // Fetch
         let opcode = self.fetch();
+        let decoded = DecodedFields::new(opcode);
 
-        // Decode
-        let (first, x, y, n, nnn, nn) = Self::decode_fields(opcode);
-
-        // Execute
-        match first {
+        match decoded.first_nibble {
 
             0x0 => {
                 match opcode {
                     0x00E0 => {
                         // Clear display
+                        self.display = [[false; DISPLAY_WIDTH]; DISPLAY_HEIGHT];
                     }
                     0x00EE => {
                         // Return from subroutine
+                        if self.sp == 0 {
+                            eprintln!("Stack underflow on 0x00EE");
+                            return;
+                        }
+                        self.sp -= 1;
+                        self.pc = self.stack[self.sp as usize];
                     }
                     _ => {
-                        // 0NNN - Ignored (legacy RCA 1802 call)
+                        eprintln!("Unknown opcode: {:#06X}", opcode);
                     }
                 }
             }
 
             0x1 => {
-                // 1NNN - Jump to address NNN
+                // Jump to address NNN
+                self.pc = decoded.nnn;
             }
 
             0x6 => {
-                // 6XNN - Set VX = NN
+                // Set VX to NN
+                self.v[decoded.x as usize] = decoded.nn;
             }
 
             0x7 => {
-                // 7XNN - VX += NN
+                // VX += NN (wrapping)
+                self.v[decoded.x as usize] =
+                    self.v[decoded.x as usize].wrapping_add(decoded.nn);
             }
 
             0xA => {
-                // ANNN - Set I = NNN
+                // Set I to NNN
+                self.i = decoded.nnn;
             }
 
             0xD => {
-                // DXYN - Draw sprite
+                let x_pos = self.v[decoded.x as usize] as usize;
+                let y_pos = self.v[decoded.y as usize] as usize;
+                let height = decoded.n as usize;
+
+                self.v[0xF] = 0;
+
+                for row in 0..height {
+                    let sprite_byte =
+                        self.memory[(self.i + row as u16) as usize];
+
+                    for bit in 0..8 {
+                        let sprite_pixel =
+                            (sprite_byte & (0x80 >> bit)) != 0;
+
+                        if sprite_pixel {
+                            let x = (x_pos + bit) % DISPLAY_WIDTH;
+                            let y = (y_pos + row) % DISPLAY_HEIGHT;
+
+                            if self.display[y][x] {
+                                self.v[0xF] = 1;
+                            }
+
+                            self.display[y][x] ^= true;
+                        }
+                    }
+                }
             }
 
             _ => {
-                // Unknown or unimplemented opcode
+                eprintln!("Unknown opcode: {:#06X}", opcode);
             }
         }
     }
