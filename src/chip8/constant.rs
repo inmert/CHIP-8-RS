@@ -1,0 +1,64 @@
+// ───────────────────────────────────────────────────────────────
+//  CHIP-8 Emulator — Rust
+//  Constants used throughout the emulator.
+// ───────────────────────────────────────────────────────────────
+
+// =========================
+// MEMORY
+// =========================
+
+pub const MEMORY_SIZE: usize = 4096;
+pub const PROGRAM_START: u16 = 0x200;
+
+// =========================
+// FONT
+// =========================
+
+pub const FONT_START: u16 = 0x50;
+pub const FONT_SIZE: usize = 80;
+
+pub const FONT_SET: [u8; FONT_SIZE] = [
+    0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+    0x20, 0x60, 0x20, 0x20, 0x70, // 1
+    0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+    0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+    0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+    0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+    0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+    0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+    0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+    0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+    0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+    0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+    0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+    0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+    0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+    0xF0, 0x80, 0xF0, 0x80, 0x80  // F
+];
+
+// =========================
+// DISPLAY
+// =========================
+
+pub const DISPLAY_WIDTH: usize = 64;
+pub const DISPLAY_HEIGHT: usize = 32;
+
+// =========================
+// REGISTERS
+// =========================
+
+pub const NUM_REGISTERS: usize = 16;
+pub const STACK_SIZE: usize = 16;
+
+// =========================
+// KEYPAD
+// =========================
+
+pub const NUM_KEYS: usize = 16;
+
+// =========================
+// TIMERS
+// =========================
+
+pub const TIMER_HZ: u64 = 60;
+
