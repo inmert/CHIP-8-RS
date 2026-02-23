@@ -69,7 +69,7 @@ impl DecodedFields {
 }
 
 // ===============================================================
-// Chip8 Construction
+// Chip8 Implementation
 // ===============================================================
 
 impl Default for Chip8 {
@@ -80,6 +80,7 @@ impl Default for Chip8 {
 
 impl Chip8 {
 
+    // Initialize a new Chip8 instance with default state
     pub fn new() -> Self {
         let mut chip8: Chip8 = Self {
             memory: [0; MEMORY_SIZE],
@@ -102,6 +103,7 @@ impl Chip8 {
         chip8
     }
 
+    // Load a ROM into memory starting at 0x200
     pub fn load_rom(&mut self, data: &[u8]) {
         let start: usize = PROGRAM_START as usize;
         let end: usize = start + data.len();
@@ -112,6 +114,17 @@ impl Chip8 {
 
         self.memory[start..end].copy_from_slice(data);
     }
+
+    // Decrement timers (should be called at 60Hz externally)
+    pub fn tick_timers(&mut self) {
+    if self.delay_timer > 0 {
+        self.delay_timer -= 1;
+    }
+
+    if self.sound_timer > 0 {
+        self.sound_timer -= 1;
+    }
+}
 
     // ===========================================================
     // Fetch Stage
@@ -296,7 +309,7 @@ impl Chip8 {
 
                     // VX <<= 1, VF = most significant bit before shift
                     0xE => {
-                        let msb = (self.v[decoded.x as usize] & 0x80) >> 7;
+                        let msb: u8 = (self.v[decoded.x as usize] & 0x80) >> 7;
                         self.v[0xF] = msb;
                         self.v[decoded.x as usize] <<= 1;
                     }
@@ -343,7 +356,7 @@ impl Chip8 {
                 self.v[0xF] = 0;
 
                 for row in 0..height {
-                    let sprite_byte =
+                    let sprite_byte: u8 =
                         self.memory[(self.i + row as u16) as usize];
 
                     for bit in 0..8 {
@@ -366,7 +379,7 @@ impl Chip8 {
 
             // Key input instructions
             0xE => {
-                let key = self.v[decoded.x as usize] as usize;
+                let key: usize = self.v[decoded.x as usize] as usize;
 
                 match decoded.nn {
                     0x9E => {
@@ -425,13 +438,13 @@ impl Chip8 {
 
                     // FX29 — Set I to font character location
                     0x29 => {
-                        let digit = (self.v[decoded.x as usize] & 0x0F) as u16;
+                        let digit: u16 = (self.v[decoded.x as usize] & 0x0F) as u16;
                         self.i = FONT_START + digit * 5;
                     }
 
                     // FX33 — Store BCD representation of VX at I, I+1, I+2
                     0x33 => {
-                        let value = self.v[decoded.x as usize];
+                        let value: u8 = self.v[decoded.x as usize];
 
                         self.memory[self.i as usize]     = value / 100;
                         self.memory[self.i as usize + 1] = (value % 100) / 10;
